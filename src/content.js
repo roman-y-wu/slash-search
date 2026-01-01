@@ -452,6 +452,82 @@ const SITE_ADAPTERS = [
       "header input[placeholder*='Search' i]"
     ]
   },
+  // Facebook
+  {
+    test: (h) => /(^|\.)facebook\.com$/i.test(h),
+    selectors: [
+      "input[type='search']",
+      "input[aria-label*='Search' i]",
+      "input[placeholder*='Search' i]",
+      "input[role='combobox'][aria-label*='Search' i]"
+    ]
+  },
+  // Apple Music
+  {
+    test: (h) => /(^|\.)music\.apple\.com$/i.test(h),
+    find: () => {
+      const light = pickFirstVisible([
+        "input[type='search']",
+        "input[aria-label*='Search' i]",
+        "input[placeholder*='Search' i]",
+        ".search-input input",
+        "input.search-input"
+      ]);
+      if (light) return light;
+
+      const deep = pickFirstVisibleDeep([
+        "input[type='search']",
+        "input[aria-label*='Search' i]",
+        "input[placeholder*='Search' i]",
+        ".search-input input"
+      ]);
+      return deep || null;
+    }
+  },
+  // Walmart
+  {
+    test: (h) => /(^|\.)walmart\.com$/i.test(h),
+    selectors: [
+      "input#search-input",
+      "input[name='query']",
+      "input[aria-label*='Search' i]",
+      "input[type='search']",
+      "input[placeholder*='Search' i]"
+    ]
+  },
+  // Best Buy
+  {
+    test: (h) => /(^|\.)bestbuy\.com$/i.test(h),
+    selectors: [
+      "input#search-input",
+      "input.search-input",
+      "input[aria-label*='Search' i]",
+      "input[type='search']",
+      "input[placeholder*='Search' i]"
+    ]
+  },
+  // Airbnb (supports international domains)
+  {
+    test: (h) => /(^|\.)airbnb\./i.test(h),
+    selectors: [
+      "input[name='query']",
+      "input[aria-label*='Search' i]",
+      "input[placeholder*='Search' i]",
+      "input[type='search']",
+      "button[aria-label*='Search' i]"
+    ]
+  },
+  // Expedia (supports international domains)
+  {
+    test: (h) => /(^|\.)expedia\./i.test(h),
+    selectors: [
+      "input[data-stid*='search' i]",
+      "input[aria-label*='search' i]",
+      "input[placeholder*='search' i]",
+      "input[type='search']",
+      "button[aria-label*='Search' i]"
+    ]
+  },
   {
     test: (h) => /(^|\.)wikipedia\.org$/i.test(h),
     selectors: ["#searchInput", "input[name='search']"]
@@ -481,7 +557,21 @@ const candidateSelectors = [
   // Common ids
   "#search, #search-box, #searchbox, #search-field, #search-query, #search-input",
   // Occasionally textarea is used
-  "textarea[aria-label*='search' i]"
+  "textarea[aria-label*='search' i]",
+  // International: Chinese
+  "input[placeholder*='搜索']",
+  "input[placeholder*='查找']",
+  "input[aria-label*='搜索']",
+  // International: Japanese
+  "input[placeholder*='検索']",
+  "input[aria-label*='検索']",
+  // International: Korean
+  "input[placeholder*='검색']",
+  "input[aria-label*='검색']",
+  // Data attributes (testing frameworks)
+  "input[data-testid*='search' i]",
+  "input[data-cy*='search' i]",
+  "input[data-test*='search' i]"
 ];
 
 const isSearchyInput = (el) => {
@@ -512,8 +602,26 @@ const scoreCandidate = (el) => {
   if (ph.includes("search")) score += 3;
   if (el.closest("[role='search'], form[role='search']")) score += 4;
 
-  // Prefer inputs near top-left (common placement)
+  // International keywords (Chinese, Japanese, Korean)
+  const intlKeywords = ["搜索", "查找", "検索", "검색"];
+  for (const kw of intlKeywords) {
+    if (ph.includes(kw) || aria.includes(kw)) {
+      score += 3;
+      break;
+    }
+  }
+
+  // Parent container context: header, nav, toolbar are common search locations
+  if (el.closest("header, nav, [role='banner'], [role='navigation'], .header, .nav, .navbar, .toolbar")) {
+    score += 2;
+  }
+
+  // Input size: larger inputs are more likely to be main search
   const rect = el.getBoundingClientRect();
+  if (rect.width >= 200) score += 1;
+  if (rect.width >= 300) score += 1;
+
+  // Prefer inputs near top-left (common placement)
   const vpW = Math.max(1, window.innerWidth || 1);
   const vpH = Math.max(1, window.innerHeight || 1);
   const y = Math.max(0, rect.top) / vpH; // 0 top, 1 bottom
@@ -587,18 +695,12 @@ const findSiteSpecific = () => {
   return null;
 };
 
-const findGeneric = () => {
-  const all = new Set();
-  for (const sel of candidateSelectors) {
-    for (const n of document.querySelectorAll(sel)) {
-      if (isVisible(n) && isSearchyInput(n)) all.add(n);
-    }
-  }
-  if (all.size === 0) return null;
-  // Score and pick best
+// Score candidates and return the best one
+const pickBestCandidate = (candidates) => {
+  if (candidates.size === 0) return null;
   let best = null;
   let bestScore = -Infinity;
-  for (const el of all) {
+  for (const el of candidates) {
     const sc = scoreCandidate(el);
     if (sc > bestScore) {
       best = el;
@@ -606,6 +708,35 @@ const findGeneric = () => {
     }
   }
   return best;
+};
+
+// Light DOM search (fast)
+const findGenericLight = () => {
+  const all = new Set();
+  for (const sel of candidateSelectors) {
+    for (const n of document.querySelectorAll(sel)) {
+      if (isVisible(n) && isSearchyInput(n)) all.add(n);
+    }
+  }
+  return pickBestCandidate(all);
+};
+
+// Deep DOM search including shadow roots (slower, but catches web components)
+const findGenericDeep = () => {
+  const nodes = queryAllDeep(candidateSelectors);
+  const all = new Set();
+  for (const n of nodes) {
+    if (isVisible(n) && isSearchyInput(n)) all.add(n);
+  }
+  return pickBestCandidate(all);
+};
+
+const findGeneric = () => {
+  // 1) Try light DOM first (faster)
+  const light = findGenericLight();
+  if (light) return light;
+  // 2) Fallback: search shadow DOM
+  return findGenericDeep();
 };
 
 const findSearchInput = () => {
