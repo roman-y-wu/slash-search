@@ -528,6 +528,44 @@ const SITE_ADAPTERS = [
       "button[aria-label*='Search' i]"
     ]
   },
+  // Gemini (Google AI)
+  {
+    test: (h) => /(^|\.)gemini\.google\.com$/i.test(h),
+    find: () => {
+      // Gemini uses a rich text editor (contenteditable) or textarea for input
+      // Check contenteditable elements first (bypass isSearchyInput check)
+      const contentEditableSelectors = [
+        "[contenteditable='true'][aria-label*='prompt' i]",
+        "[contenteditable='true'][aria-label*='message' i]",
+        "div[role='textbox'][contenteditable='true']",
+        "[contenteditable='true']"
+      ];
+      for (const sel of contentEditableSelectors) {
+        const nodes = document.querySelectorAll(sel);
+        for (const n of nodes) {
+          if (isVisible(n)) return n;
+        }
+      }
+
+      // Then try textarea/input via normal flow
+      const light = pickFirstVisible([
+        "textarea[aria-label*='prompt' i]",
+        "textarea[placeholder*='prompt' i]",
+        "textarea[aria-label*='message' i]",
+        "rich-textarea textarea",
+        "textarea"
+      ]);
+      if (light) return light;
+
+      const deep = pickFirstVisibleDeep([
+        "textarea[aria-label*='prompt' i]",
+        "textarea[placeholder*='prompt' i]",
+        "rich-textarea textarea",
+        "textarea"
+      ]);
+      return deep || null;
+    }
+  },
   {
     test: (h) => /(^|\.)wikipedia\.org$/i.test(h),
     selectors: ["#searchInput", "input[name='search']"]
